@@ -35,7 +35,7 @@ struct FEnemySpec
     //사거리
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EnemyStat")
     float AttackRange = 50.0f;
-
+    
     //데미지
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EnemyStat")
     float AttackDamage = 1.0f;
@@ -80,10 +80,25 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "EnemyData")
     FEnemySpec EnemySpec;
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "EnemyStats")
+    EEnemyType EnemyType;
+
     // 💡 [추가] 이 몬스터 전용 공격/사망 애니메이션 몽타주 등록 슬롯
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "animation")
     class UAnimMontage* AttackMontage;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "animation")
     class UAnimMontage* DeathMontage;
+
+    // --- 스폰 설정  ---
+
+    //출현 확률 
+    
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Spawn", meta = (ClampMin = "0"))
+    float SpawnWeight = 10.0f;
+
+    // 💡 이 웨이브 단계부터 등장합니다. (0 = 처음부터, 5 = 5단계부터)
+    //    강한 몬스터는 5, 10처럼 높게 주면 후반에만 나옵니다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Spawn", meta = (ClampMin = "0"))
+    int32 MinSpawnWave = 0;
 };

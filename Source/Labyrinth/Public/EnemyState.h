@@ -26,16 +26,4 @@ class LABYRINTH_API UEnemyState : public UObject
 {
     GENERATED_BODY()
 };
-//행동 로직
-/*class IEnemyState
-{
-public:
-    virtual ~IEnemyState() = default;
 
-    virtual void EnterState(AEnemyAIController* AIController, AEnemyBase* Enemy) = 0;
-    virtual void UpdateState(AEnemyAIController* AIController, AEnemyBase* Enemy, float DeltaTime) = 0;
-    virtual void ExitState(AEnemyAIController* AIController, AEnemyBase* Enemy) = 0;
-
-   
-    virtual EEnemyState GetType() const = 0;
-};*/

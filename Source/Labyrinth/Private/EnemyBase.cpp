@@ -3,7 +3,10 @@
 
 #include "EnemyBase.h"
 #include "EnemyDataAsset.h"
+#include "MainCharacter.h"
+#include "LabyrinthGameModeBase.h"
 #include "Kismet/GameplayStatics.h"
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
 
@@ -11,13 +14,15 @@
 AEnemyBase::AEnemyBase()
 {
  	
-	PrimaryActorTick.bCanEverTick = false;
-	AutoPossessPlayer = EAutoReceiveInput::Disabled;
-	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+	PrimaryActorTick.bCanEverTick = true;
+	// AI 컨트롤러 없이 움직이기 (몬스터가 많아도 가볍게)
+	AutoPossessAI = EAutoPossessAI::Disabled;                    // 컨트롤러 자동 생성 안 함
+	GetCharacterMovement()->bRunPhysicsWithNoController = true; // 컨트롤러 없어도 이동 처리
 
 	// 이동 방향으로 정면을 회전시키는 옵션
 	GetCharacterMovement()->bOrientRotationToMovement = true;
 	bUseControllerRotationYaw = false;
+	GetCharacterMovement()->RotationRate = FRotator(0.0f, 400.0f, 0.0f);
 }
 
 
@@ -27,7 +32,9 @@ void AEnemyBase::BeginPlay()
 {
 	Super::BeginPlay();
 
-	PrimaryActorTick.bCanEverTick = false;
+
+	TargetPlayer = UGameplayStatics::GetPlayerPawn(this, 0);
+
 	bIsAttacking = false;
 
 
@@ -40,13 +47,19 @@ void AEnemyBase::BeginPlay()
 		FinalAttackRange = Spec.AttackRange; // 내 사거리 숫자를 저장 (AI 컨트롤러가 읽어감)
 		AttackDamage = Spec.AttackDamage;
 		FinalMiniAttackRange = Spec.MiniAttackRange;
+		ContactDamageCooldown = Spec.AttackCooldown; // 접촉 데미지 간격
 
 		if (GetCharacterMovement())
 		{
 			GetCharacterMovement()->MaxWalkSpeed = Spec.MoveSpeed;
 		}
 	}
-	
+
+	// 💡 [웨이브] 기본 능력치(데이터 에셋 또는 BP 기본값)에 웨이브 배율을 곱합니다.
+	CurrentHP *= HealthMultiplier;
+	AttackDamage *= DamageMultiplier;
+	GetCharacterMovement()->MaxWalkSpeed *= SpeedMultiplier;
+
 	// 1. [최적화] 매번 검색하지 않도록 0번 플레이어(타깃) 주소를 메모리에 미리 저장합니다.
 	TargetPlayer = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
 
@@ -55,6 +68,9 @@ void AEnemyBase::BeginPlay()
 
 	// 3. 💡 0.1초마다 상황을 직접 판단하고 행동하는 경량 AI 타이머(뇌)를 작동시킵니다!
 	GetWorldTimerManager().SetTimer(AIUpdateTimerHandle, this, &AEnemyBase::UpdateAIBehavior, 0.1f, true);
+
+	// 4. 💡 [접촉 데미지] 캡슐이 무언가에 부딪히면 OnCapsuleHit이 호출되도록 연결
+	GetCapsuleComponent()->OnComponentHit.AddDynamic(this, &AEnemyBase::OnCapsuleHit);
 }
 
 // Called every frame
@@ -62,58 +78,90 @@ void AEnemyBase::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-}
+	if (EnemyState == EEnemyState::Dead) return;
 
-void AEnemyBase::UpdateAIBehavior()
-{
-	// 🔴 중요: 죽었거나, 이미 공격 잠금 플래그(bIsAttacking)가 켜져 있다면 모든 이동과 거리 체크를 무시하고 대기합니다.
-	// 이 잠금 덕분에 플레이어가 도망쳐도 몹이 미끄러지지 않고 하던 공격 모션(선후딜)을 끝까지 유지합니다.
-	if (EnemyState == EEnemyState::Dead || EnemyState == EEnemyState::Attack || bIsAttacking)
-	{
-		return;
-	}
-	
+	// 플레이어를 아직 못 찾았으면 다시 찾기 (몬스터가 플레이어보다 먼저 생성된 경우)
 	if (!TargetPlayer)
 	{
 		TargetPlayer = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
 		if (!TargetPlayer) return;
 	}
 
-	float Distance = FVector::Dist(GetActorLocation(), TargetPlayer->GetActorLocation());
+	// 매 프레임 플레이어 쪽으로 밀어줌 → 도착 개념이 없어서 절대 멈추지 않고 계속 추적
+	FVector MoveDirection = TargetPlayer->GetActorLocation() - GetActorLocation();
+	MoveDirection.Z = 0.0f;
+	AddMovementInput(MoveDirection.GetSafeNormal(), 1.0f);
 
-	if (Distance < FinalMiniAttackRange)
+	// 현재 상태를 추격(Chase) 상태로 명시해 줍니다. (애니메이션 연동용)
+	EnemyState = EEnemyState::Chase;
+}
+
+void AEnemyBase::SetWaveMultipliers(float InHealthMultiplier, float InDamageMultiplier, float InSpeedMultiplier)
+{
+	// BeginPlay보다 먼저 호출되어야 체력 등이 배율대로 시작합니다. (GameMode의 SpawnActorDeferred 사용)
+	HealthMultiplier = InHealthMultiplier;
+	DamageMultiplier = InDamageMultiplier;
+	SpeedMultiplier = InSpeedMultiplier;
+}
+
+void AEnemyBase::UpdateAIBehavior()
+{
+
+}
+
+float AEnemyBase::TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent,
+	AController* EventInstigator, AActor* DamageCauser)
+{
+	const float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+
+	// 이미 죽었거나 데미지가 0이면 무시 (투사체 여러 발이 동시에 맞아도 한 번만 죽도록)
+	if (EnemyState == EEnemyState::Dead || ActualDamage <= 0.0f) return 0.0f;
+
+	CurrentHP -= ActualDamage;
+	if (CurrentHP <= 0.0f)
 	{
-		EnemyState = EEnemyState::Run;
-
-		FVector EscapeDirection = (TargetPlayer->GetActorLocation() - GetActorLocation()).GetSafeNormal2D() * -1.0f;
-		AddMovementInput(EscapeDirection, 1.0f);
-
-		FVector LookDirection = (TargetPlayer->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-		FRotator TargetRotation = LookDirection.Rotation();
-		SetActorRotation(FRotator(0.f, TargetRotation.Yaw, 0.f));
+		Die();
 	}
-	else if (Distance <= FinalAttackRange)
+	return ActualDamage;
+}
+
+void AEnemyBase::Die()
+{
+	// 먼저 Dead로 바꿔서 이동(Tick), 조준(스킬 컴포넌트), 피격(투사체)에서 모두 제외
+	EnemyState = EEnemyState::Dead;
+
+	// 1. 플레이어에게 경험치 지급 (데이터 에셋의 RewardExp, 데이터 에셋이 없으면 10)
+	if (AMainCharacter* Player = Cast<AMainCharacter>(TargetPlayer))
 	{
-		EnemyState = EEnemyState::Attack;
-		StartAttack();
+		Player->GainExp(EnemyDataAsset ? EnemyDataAsset->EnemySpec.RewardExp : 10.0f);
 	}
-	// 🔴 [판단 1] 정확히 사거리 안으로 진입했다면? -> 멈추고 공격 돌입
-	if (Distance <= FinalAttackRange)
-	{
-		EnemyState = EEnemyState::Attack;
-		StartAttack(); // 공격 개시!
-	}
-	// 🔴 [판단 2] 사거리 밖에 있다면? -> 플레이어를 향해 단순 직선 전진 (재추적 자동 해결)
-	else
-	{
-		EnemyState = EEnemyState::Chase;
 
-		// 길찾기(NavMesh) 연산을 거치지 않는 초경량 직선 이동 입력 (렉 유발 주범 제거)
-		FVector Direction = (TargetPlayer->GetActorLocation() - GetActorLocation()).GetSafeNormal2D();
-		AddMovementInput(Direction, 1.0f);
-
-		// CharacterMovement의 bOrientRotationToMovement 옵션 덕분에 회전은 엔진이 알아서 부드럽게 처리해 줍니다.
+	// 2. GameMode에 처치 수 알림 (결과 창의 킬 수)
+	if (ALabyrinthGameModeBase* GM = GetWorld()->GetAuthGameMode<ALabyrinthGameModeBase>())
+	{
+		GM->OnEnemyKilled();
 	}
+
+	// 3. 필드에서 제거 → GameMode의 살아있는 몬스터 수도 자동으로 줄어듭니다 (스폰 시 OnDestroyed 연결)
+	Destroy();
+}
+
+void AEnemyBase::OnCapsuleHit(UPrimitiveComponent* HitComponent, AActor* OtherActor,
+	UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
+{
+	if (EnemyState == EEnemyState::Dead) return;
+
+	// 부딪힌 상대가 플레이어 캐릭터일 때만 (바닥, 벽, 다른 몬스터는 무시)
+	AMainCharacter* Player = Cast<AMainCharacter>(OtherActor);
+	if (!Player) return;
+
+	// 쿨타임이 안 지났으면 무시 (몬스터가 계속 플레이어 쪽으로 밀고 있어서 붙어 있는 동안 매 프레임 Hit이 들어옴)
+	const float Now = GetWorld()->GetTimeSeconds();
+	if (Now - LastContactDamageTime < ContactDamageCooldown) return;
+	LastContactDamageTime = Now;
+
+	// 웨이브 배율이 적용된 공격력으로 데미지 (체력 0이 되면 MainCharacter::Die → 게임오버)
+	Player->TakeSurvivalDamage(AttackDamage);
 }
 // Called to bind functionality to input
 void AEnemyBase::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -122,7 +170,7 @@ void AEnemyBase::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent
 
 }
 
-void AEnemyBase::StartAttack_Implementation()
+/*oid AEnemyBase::StartAttack_Implementation()
 {
 	if (bIsAttacking) return;
 	bIsAttacking = true;
@@ -151,10 +199,10 @@ void AEnemyBase::StartAttack_Implementation()
 		float Duration = (EnemyDataAsset) ? EnemyDataAsset->EnemySpec.AttackDuration : 0.5f;
 		GetWorldTimerManager().SetTimer(AttackDurationTimerHandle, this, &AEnemyBase::EndAttack, Duration, false);
 	}
-}
+}*/
 
 // 💡 공격이 완전히 종료되었을 때 호출되어 상태 잠금을 풀어주는 함수
-void AEnemyBase::EndAttack()
+/*void AEnemyBase::EndAttack()
 {
 	bIsAttacking = false;
 
@@ -167,7 +215,7 @@ void AEnemyBase::EndAttack()
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan, TEXT("적: 공격 선후딜 종료! 상태 리셋"));
 	}
-}
+}*/
 
 //예비 
 void AEnemyBase::ApplyEffectDamage()

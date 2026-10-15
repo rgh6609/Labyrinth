@@ -30,20 +30,28 @@ public:
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
+	// 💡 [피격] 투사체의 ApplyDamage가 여기로 들어옵니다. 체력을 깎고 0 이하면 Die()
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
+		AController* EventInstigator, AActor* DamageCauser) override;
+
 public:
 
     //공격 개시 스위치
-    UFUNCTION(BlueprintNativeEvent, Category = "Enemy|Combat")
-    void StartAttack();
-    virtual void StartAttack_Implementation();
+   // UFUNCTION(BlueprintNativeEvent, Category = "Enemy|Combat")
+   // void StartAttack();
+  //  virtual void StartAttack_Implementation();
 
     // 💡 [추가] 공격 선후딜이 끝났을 때(가상 타이머나 애님 노티파이 종료 시) 호출하여 잠금을 풀 함수
-    UFUNCTION(BlueprintCallable, Category = "Enemy|Combat")
-    void EndAttack();
+   // UFUNCTION(BlueprintCallable, Category = "Enemy|Combat")
+  //  void EndAttack();
 
     // 💡 애니메이션에서 실제 타격 판정이 일어나는 순간 호출할 함수 (기존 구조 유지)
     UFUNCTION(BlueprintCallable, Category = "Enemy|Combat")
     void ApplyEffectDamage();
+
+    // 💡 [웨이브] GameMode가 스폰 직후(BeginPlay 전)에 호출해서 웨이브 단계별 능력치 배율을 넣어줍니다.
+    //    BeginPlay에서 데이터 에셋 값을 읽은 뒤 이 배율을 곱합니다. (1.0 = 그대로, 1.5 = 50% 증가)
+    void SetWaveMultipliers(float InHealthMultiplier, float InDamageMultiplier, float InSpeedMultiplier);
 
     // 💡 에디터에서 몬스터 종류별 카드를 꽂아줄 슬롯 변수
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EnemyStats")
@@ -99,4 +107,23 @@ private:
     // 💡 0.1초마다 무한 반복 실행되며 상태와 거리를 판단할 핵심 두뇌 함수
     UFUNCTION()
     void UpdateAIBehavior();
+
+    // 💡 [사망] 체력이 0 이하가 되면 호출: 경험치 지급 → 처치 수 증가 → 필드에서 제거
+    void Die();
+
+    // 💡 [접촉 데미지] 몬스터 캡슐이 무언가에 부딪힐 때마다 호출 (상대가 플레이어면 데미지)
+    UFUNCTION()
+    void OnCapsuleHit(UPrimitiveComponent* HitComponent, AActor* OtherActor,
+        UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
+
+    // 💡 [접촉 데미지] 쿨타임 (데이터 에셋의 AttackCooldown, 데이터 에셋이 없으면 1초)
+    float ContactDamageCooldown = 1.0f;
+
+    // 💡 [접촉 데미지] 마지막으로 플레이어에게 데미지를 준 시각
+    float LastContactDamageTime = -1000.0f;
+
+    // 💡 [웨이브] SetWaveMultipliers로 받은 배율 (맵에 직접 배치한 몬스터는 1.0 그대로)
+    float HealthMultiplier = 1.0f;
+    float DamageMultiplier = 1.0f;
+    float SpeedMultiplier = 1.0f;
 };

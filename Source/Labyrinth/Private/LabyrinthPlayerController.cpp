@@ -2,30 +2,35 @@
 
 
 #include "LabyrinthPlayerController.h"
-#include "EnhancedInputSubsystems.h"
 
-void ALabyrinthPlayerController::BeginPlay()
+ALabyrinthPlayerController::ALabyrinthPlayerController()
 {
-    Super::BeginPlay();
+	// 게임 시작 직후에는 마우스 조준이 필요 없으므로 커서를 숨깁니다.
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
+}
 
-    // 마우스 커서 활성화 (탑다운 필수)
-    bShowMouseCursor = true;
-    // 2. 시작하자마자 화면 클릭 필요 없이 조작되도록 인풋 모드 설정 (핵심)
-    FInputModeGameAndUI InputModeData;
-    InputModeData.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-    InputModeData.SetHideCursorDuringCapture(false); // 마우스 클릭해도 커서 안 숨기기
+void ALabyrinthPlayerController::SetUIInputMode(bool bEnableMouse)
+{
+	bShowMouseCursor = bEnableMouse;
+	bEnableClickEvents = bEnableMouse;
+	bEnableMouseOverEvents = bEnableMouse;
 
-    SetInputMode(InputModeData);
+	if (bEnableMouse)
+	{
+		FInputModeUIOnly InputMode;
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(InputMode);
+	}
+}
 
-    // 향상된 입력 시스템에 IMC 등록
-    if (ULocalPlayer* LocalPlayer = GetLocalPlayer())
-    {
-        if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(LocalPlayer))
-        {
-            if (DefaultMappingContext)
-            {
-                Subsystem->AddMappingContext(DefaultMappingContext, 0);
-            }
-        }
-    }
+void ALabyrinthPlayerController::SetGameInputMode()
+{
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
+
+	FInputModeGameOnly InputMode;
+	SetInputMode(InputMode);
 }

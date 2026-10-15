@@ -6,23 +6,18 @@
 #include "GameFramework/PlayerController.h"
 #include "LabyrinthPlayerController.generated.h"
 
-/**
- * 
- */
-
-class UInputMappingContext;
-
-
 UCLASS()
 class LABYRINTH_API ALabyrinthPlayerController : public APlayerController
 {
 	GENERATED_BODY()
 
-protected:
-    virtual void BeginPlay() override;
+public:
+	ALabyrinthPlayerController();
 
-    // 에디터에서 IMC_Default를 집어넣을 변수
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
-    UInputMappingContext* DefaultMappingContext;
-	
+	// --- [ UI 및 마우스 제어 핵심 함수 ] ---
+	UFUNCTION(BlueprintCallable, Category = "Survival|UI")
+	void SetUIInputMode(bool bEnableMouse);
+
+	UFUNCTION(BlueprintCallable, Category = "Survival|UI")
+	void SetGameInputMode();
 };

@@ -10,6 +10,8 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
+#include "Kismet/GameplayStatics.h"
+#include "LabyrinthGameModeBase.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
@@ -76,10 +78,6 @@ void ALabyrinthCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 	// Set up action bindings
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent)) {
 		
-		// Jumping
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
-
 		// Moving
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ALabyrinthCharacter::Move);
 
@@ -125,5 +123,53 @@ void ALabyrinthCharacter::Look(const FInputActionValue& Value)
 		// add yaw and pitch input to controller
 		AddControllerYawInput(LookAxisVector.X);
 		AddControllerPitchInput(LookAxisVector.Y);
+	}
+}
+void ALabyrinthCharacter::TakeSurvivalDamage(float DamageAmount)
+{
+	// 🔄 ALabyrinthGameModeBase로 변경하여 현재 Playing 상태일 때만 데미지를 계산합니다.
+	ALabyrinthGameModeBase* GM = Cast<ALabyrinthGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+	if (GM && GM->GetCurrentState() != ESurvivalGameState::Playing) return;
+
+	CurrentHP = FMath::Clamp(CurrentHP - DamageAmount, 0.0f, MaxHP);
+
+	// 체력이 0이 되면 사망
+	if (CurrentHP <= 0.0f)
+	{
+		Die();
+	}
+}
+
+void ALabyrinthCharacter::GainExp(float Amount)
+{
+	CurrentEXP += Amount;
+
+	// 먹은 경험치가 요구량을 넘으면 레벨업 (연속 레벨업 대응을 위해 while문 처리)
+	while (CurrentEXP >= MaxEXP)
+	{
+		LevelUp();
+	}
+}
+
+void ALabyrinthCharacter::LevelUp()
+{
+	CurrentEXP -= MaxEXP;
+	CurrentLevel++;
+
+	// 레벨당 요구 경험치 수치 30% 증가
+	MaxEXP = FMath::RoundToFloat(MaxEXP * 1.3f);
+
+	// 게임을 일시정지 상태로 만들고 블루프린트에 "스킬 선택 UI 띄워!" 하고 신호를 보냅니다.
+	UGameplayStatics::SetGamePaused(GetWorld(), true);
+	OnLevelUpBlueprintEvent();
+}
+
+void ALabyrinthCharacter::Die()
+{
+	// 🔄 ALabyrinthGameModeBase로 변경하여 플레이어가 죽었다고 알립니다.
+	ALabyrinthGameModeBase* GM = Cast<ALabyrinthGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+	if (GM)
+	{
+		GM->OnPlayerDied();
 	}
 }
